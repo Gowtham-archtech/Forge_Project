@@ -33,15 +33,21 @@ export interface PlannedExercise {
   targetRepsMax: number;
   targetWeightKg?: number;
   restSeconds: number;
-  supersetPairId?: string; // If part of a superset pair
+  supersetPairId?: string;
   orderIndex: number;
 }
 
+/**
+ * EXACT SUPERSET RULES (Enforced on both Frontend & Backend):
+ * - Week 1: exactly 0 superset pairs per training day (supersetPairs.length === 0).
+ * - Weeks 2-4: exactly 2 superset pairs per training day (supersetPairs.length === 2).
+ * - Total across Weeks 2-4: 30 superset pairs across 15 training days.
+ */
 export interface TrainingDayPlan {
   dayNumber: 1 | 2 | 3 | 4 | 5;
   splitName: SplitDayName;
   exercises: PlannedExercise[];
-  supersetPairs: SupersetPair[]; // Week 1: 0 pairs; Weeks 2-4: exactly 2 pairs
+  supersetPairs: SupersetPair[];
 }
 
 export interface TrainingWeekPlan {
@@ -55,4 +61,27 @@ export interface TrainingProgramPlan {
   weeks: TrainingWeekPlan[];
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Utility validation function shared by frontend and backend
+ */
+export function validateTrainingProgramSupersets(program: TrainingProgramPlan): { valid: boolean; error?: string } {
+  for (const week of program.weeks) {
+    for (const day of week.days) {
+      if (week.weekNumber === 1 && day.supersetPairs.length !== 0) {
+        return {
+          valid: false,
+          error: `Week 1 Day ${day.dayNumber} (${day.splitName}) must have exactly 0 superset pairs, but has ${day.supersetPairs.length}`,
+        };
+      }
+      if (week.weekNumber >= 2 && week.weekNumber <= 4 && day.supersetPairs.length !== 2) {
+        return {
+          valid: false,
+          error: `Week ${week.weekNumber} Day ${day.dayNumber} (${day.splitName}) must have exactly 2 superset pairs, but has ${day.supersetPairs.length}`,
+        };
+      }
+    }
+  }
+  return { valid: true };
 }
