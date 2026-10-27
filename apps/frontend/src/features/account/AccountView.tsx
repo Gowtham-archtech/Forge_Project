@@ -2,7 +2,7 @@ import React from 'react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
-import { User, Database, Wifi, LogOut, RefreshCw } from 'lucide-react';
+import { User, Database, Wifi, LogOut, Info } from 'lucide-react';
 import { SyncState } from '@forge/types';
 
 export interface AccountViewProps {
@@ -11,7 +11,6 @@ export interface AccountViewProps {
   syncState: SyncState;
   pendingSyncCount: number;
   onLogout: () => void;
-  onTriggerSync: () => void;
 }
 
 export const AccountView: React.FC<AccountViewProps> = ({
@@ -20,7 +19,6 @@ export const AccountView: React.FC<AccountViewProps> = ({
   syncState,
   pendingSyncCount,
   onLogout,
-  onTriggerSync,
 }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -31,6 +29,26 @@ export const AccountView: React.FC<AccountViewProps> = ({
         </p>
       </div>
 
+      {/* Prototype Disclaimer Notice */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          padding: '12px 14px',
+          borderRadius: 'var(--radius-md)',
+          backgroundColor: 'rgba(255, 179, 0, 0.1)',
+          border: '1px solid rgba(255, 179, 0, 0.3)',
+          color: 'var(--forge-text-primary)',
+          fontSize: '0.85rem',
+        }}
+      >
+        <Info size={18} color="var(--forge-warning)" style={{ flexShrink: 0 }} />
+        <span>
+          <strong>Prototype Mode:</strong> User identity below is a local preview. In Phase P2, this will be populated directly from Codex's HttpOnly session API.
+        </span>
+      </div>
+
       {/* User Profile Card */}
       <Card variant="elevated" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
         <div
@@ -39,11 +57,11 @@ export const AccountView: React.FC<AccountViewProps> = ({
             height: '52px',
             borderRadius: 'var(--radius-full)',
             backgroundColor: 'var(--forge-surface-base)',
-            border: '2px solid var(--forge-accent-primary)',
+            border: '2px solid var(--forge-border-subtle)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--forge-accent-primary)',
+            color: 'var(--forge-text-secondary)',
           }}
         >
           <User size={26} />
@@ -52,7 +70,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
         <div style={{ flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <h2 style={{ fontSize: '1.15rem', margin: 0 }}>{displayName}</h2>
-            <Badge variant="accent">Verified</Badge>
+            <Badge variant="warning">Local Preview</Badge>
           </div>
           <span style={{ fontSize: '0.85rem', color: 'var(--forge-text-secondary)' }}>
             {userEmail}
@@ -65,7 +83,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Database size={16} color="var(--forge-accent-primary)" />
           <h3 style={{ fontSize: '0.95rem', margin: 0, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            IndexedDB Local Isolation
+            IndexedDB Local Storage
           </h3>
         </div>
 
@@ -73,51 +91,39 @@ export const AccountView: React.FC<AccountViewProps> = ({
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: 'var(--forge-text-secondary)' }}>Database Scope:</span>
             <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--forge-text-primary)' }}>
-              forge_db_gowtham_01
+              forge_db_demo_user
             </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--forge-text-secondary)' }}>Isolation Status:</span>
-            <span style={{ color: 'var(--forge-accent-primary)', fontWeight: 600 }}>
-              Encapsulated per account
-            </span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--forge-text-secondary)' }}>Sync Engine State:</span>
+            <span style={{ color: 'var(--forge-text-secondary)' }}>Sync Truth Status:</span>
             <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--forge-accent-primary)', textTransform: 'capitalize' }}>
               {syncState.replace(/_/g, ' ')}
             </span>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: 'var(--forge-text-secondary)' }}>Unsynced Changes:</span>
+            <span style={{ color: 'var(--forge-text-secondary)' }}>Local Unsynced Queue:</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: pendingSyncCount > 0 ? 'var(--forge-warning)' : 'var(--forge-accent-primary)' }}>
-              {pendingSyncCount} mutations queued
+              {pendingSyncCount} local mutations
             </span>
           </div>
         </div>
 
-        <Button
-          variant="secondary"
-          size="sm"
-          icon={<RefreshCw size={14} />}
-          onClick={onTriggerSync}
-          style={{ marginTop: '6px' }}
-        >
-          Force Sync Now
-        </Button>
+        <p style={{ color: 'var(--forge-text-muted)', fontSize: '0.78rem', marginTop: '4px' }}>
+          * Synced status is strictly reserved for confirmation responses from Codex's server. Workouts remain safely in IndexedDB while offline.
+        </p>
       </Card>
 
-      {/* Tailscale & Network Info */}
+      {/* Network & Tailscale Info */}
       <Card variant="base" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <Wifi size={16} color="var(--forge-info)" />
           <h3 style={{ fontSize: '0.95rem', margin: 0, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Network & Tailscale
+            Tailscale Private Mesh
           </h3>
         </div>
 
         <p style={{ color: 'var(--forge-text-secondary)', fontSize: '0.85rem' }}>
-          Connected over Tailscale private mesh. Local offline changes persist safely even if connection drops.
+          PWA offline-first architecture allows full workout logging when offline or traveling. Changes sync automatically when Tailscale reconnects.
         </p>
       </Card>
 
@@ -130,7 +136,7 @@ export const AccountView: React.FC<AccountViewProps> = ({
           icon={<LogOut size={16} />}
           onClick={onLogout}
         >
-          Log Out & Lock Local Database
+          Simulate Sign Out
         </Button>
       </div>
     </div>

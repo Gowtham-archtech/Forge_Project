@@ -1,116 +1,196 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { NumericInput } from '../../components/ui/NumericInput';
 import { RestTimer } from '../../components/ui/RestTimer';
-import { Check, CheckCircle2, XCircle, Timer, AlertCircle } from 'lucide-react';
-import { SplitDayName } from '@forge/types';
+import { Check, CheckCircle2, XCircle, Timer, AlertCircle, Database } from 'lucide-react';
+import { WorkoutSession, RecordedExercise } from '@forge/types';
+import { GeneratedDayPlan } from '../train/planData';
+import { localDb } from '../../storage/db';
 
 export interface ActiveWorkoutViewProps {
-  splitName: SplitDayName;
-  onFinishWorkout: () => void;
+  initialPlan?: GeneratedDayPlan;
+  restoredSession?: WorkoutSession | null;
+  onFinishWorkout: (session: WorkoutSession) => void;
   onCancelWorkout: () => void;
 }
 
-interface ActiveSet {
-  setNumber: number;
-  targetReps: number;
-  actualReps: number;
-  targetWeightKg: number;
-  actualWeightKg: number;
-  completed: boolean;
-}
-
-interface ActiveExercise {
-  id: string;
-  name: string;
-  supersetPair?: 'A1' | 'A2' | 'B1' | 'B2';
-  sets: ActiveSet[];
-}
-
 export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
-  splitName,
+  initialPlan,
+  restoredSession,
   onFinishWorkout,
   onCancelWorkout,
 }) => {
-  const [exercises, setExercises] = useState<ActiveExercise[]>([
-    {
-      id: 'ex-1',
-      name: 'Incline Dumbbell Press',
-      supersetPair: 'A1',
-      sets: [
-        { setNumber: 1, targetReps: 10, actualReps: 10, targetWeightKg: 28, actualWeightKg: 28, completed: true },
-        { setNumber: 2, targetReps: 10, actualReps: 10, targetWeightKg: 28, actualWeightKg: 28, completed: false },
-        { setNumber: 3, targetReps: 8, actualReps: 8, targetWeightKg: 30, actualWeightKg: 30, completed: false },
-      ],
-    },
-    {
-      id: 'ex-2',
-      name: 'Overhead Cable Triceps Extension',
-      supersetPair: 'A2',
-      sets: [
-        { setNumber: 1, targetReps: 12, actualReps: 12, targetWeightKg: 32, actualWeightKg: 32, completed: true },
-        { setNumber: 2, targetReps: 12, actualReps: 12, targetWeightKg: 32, actualWeightKg: 32, completed: false },
-        { setNumber: 3, targetReps: 12, actualReps: 12, targetWeightKg: 32, actualWeightKg: 32, completed: false },
-      ],
-    },
-  ]);
+  // Initialize workout session structure
+  const [session, setSession] = useState<WorkoutSession>(() => {
+    if (restoredSession) return restoredSession;
 
-  const [showRestTimer, setShowRestTimer] = useState<boolean>(false);
-  const [showCancelConfirm, setShowCancelConfirm] = useState<boolean>(false);
-  const [activeExIdx, setActiveExIdx] = useState<number>(0);
-  const [activeSetIdx, setActiveSetIdx] = useState<number>(1);
+    const plan = initialPlan!;
+    const exercises: RecordedExercise[] = plan.exercises.map((pe, idx) => {
+      let supersetLabel: 'A1' | 'A2' | 'B1' | 'B2' | undefined;
+      if (plan.supersetPairs.length > 0) {
+        if (pe.supersetPairId === plan.supersetPairs[0]?.id) {
+          supersetLabel = pe.exerciseId === plan.supersetPairs[0].exerciseAId ? 'A1' : 'A2';
+        } else if (pe.supersetPairId === plan.supersetPairs[1]?.id) {
+          supersetLabel = pe.exerciseId === plan.supersetPairs[1].exerciseAId ? 'B1' : 'B2';
+        }
+      }
 
-  const toggleSetCompleted = (exIdx: number, setIdx: number) => {
-    setExercises((prev) => {
-      const next = [...prev];
-      const targetEx = { ...next[exIdx] };
-      const targetSets = [...targetEx.sets];
-      const current = targetSets[setIdx];
-
-      targetSets[setIdx] = { ...current, completed: !current.completed };
-      targetEx.sets = targetSets;
-      next[exIdx] = targetEx;
-      return next;
+      return {
+        exerciseId: pe.exerciseId,
+        exerciseName: pe.exerciseName,
+        targetMuscleGroup: plan.splitName,
+        orderIndex: idx,
+        supersetPairLabel: supersetLabel,
+        sets: Array.from({ length: pe.targetSets }, (_, sIdx) => ({
+          id: `set-${pe.exerciseId}-${sIdx + 1}-${Date.now()}`,
+          setNumber: sIdx + 1,
+          targetReps: pe.targetRepsMin,
+          actualReps: pe.targetRepsMin,
+          targetWeightKg: pe.targetWeightKg || 0,
+          actualWeightKg: pe.targetWeightKg || 0,
+          completed: false,
+        })),
+      };
     });
 
-    if (!exercises[exIdx].sets[setIdx].completed) {
+    return {
+      id: `workout-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      userId: 'demo_user',
+      weekNumber: plan.weekNumber,
+      dayNumber: plan.dayNumber,
+      splitName: plan.splitName,
+      status: 'in_progress',
+      startedAt: new Date().toISOString(),
+      durationSeconds: 0,
+      exercises,
+      version: 1,
+      updatedAt: new Date().toISOString(),
+    };
+  });
+
+  const [activeExIdx, setActiveExIdx] = useState<number>(0);
+  const [activeSetIdx, setActiveSetIdx] = useState<number>(0);
+  const [showRestTimer, setShowRestTimer] = useState<boolean>(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState<boolean>(false);
+  const [saveStatus, setSaveStatus] = useState<'saving' | 'saved'>('saved');
+
+  // Durable persistence: Every time session changes, write to IndexedDB!
+  useEffect(() => {
+    let isMounted = true;
+    const persist = async () => {
+      setSaveStatus('saving');
+      try {
+        await localDb.saveActiveWorkout(session);
+        if (isMounted) setSaveStatus('saved');
+      } catch (err) {
+        console.error('Failed to persist active workout to IndexedDB:', err);
+      }
+    };
+    persist();
+    return () => {
+      isMounted = false;
+    };
+  }, [session]);
+
+  const toggleSetCompleted = (eIdx: number, sIdx: number) => {
+    setSession((prev) => {
+      const nextExercises = [...prev.exercises];
+      const targetEx = { ...nextExercises[eIdx] };
+      const targetSets = [...targetEx.sets];
+      const current = targetSets[sIdx];
+
+      const willComplete = !current.completed;
+      targetSets[sIdx] = {
+        ...current,
+        completed: willComplete,
+        completedAt: willComplete ? new Date().toISOString() : undefined,
+      };
+      targetEx.sets = targetSets;
+      nextExercises[eIdx] = targetEx;
+
+      return {
+        ...prev,
+        exercises: nextExercises,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    if (!session.exercises[eIdx].sets[sIdx].completed) {
       setShowRestTimer(true);
     }
   };
 
-  const updateSetValues = (exIdx: number, setIdx: number, reps: number, weight: number) => {
-    setExercises((prev) => {
-      const next = [...prev];
-      const targetEx = { ...next[exIdx] };
+  const updateSetValues = (eIdx: number, sIdx: number, reps: number, weight: number) => {
+    setSession((prev) => {
+      const nextExercises = [...prev.exercises];
+      const targetEx = { ...nextExercises[eIdx] };
       const targetSets = [...targetEx.sets];
-      targetSets[setIdx] = {
-        ...targetSets[setIdx],
+      targetSets[sIdx] = {
+        ...targetSets[sIdx],
         actualReps: reps,
         actualWeightKg: weight,
       };
       targetEx.sets = targetSets;
-      next[exIdx] = targetEx;
-      return next;
+      nextExercises[eIdx] = targetEx;
+
+      return {
+        ...prev,
+        exercises: nextExercises,
+        updatedAt: new Date().toISOString(),
+      };
     });
   };
 
-  const currentExercise = exercises[activeExIdx];
+  const handleFinish = async () => {
+    const completedSession: WorkoutSession = {
+      ...session,
+      status: 'completed',
+      completedAt: new Date().toISOString(),
+      durationSeconds: Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Save to completed workouts and remove from active workout store in IndexedDB
+    await localDb.saveCompletedWorkout(completedSession);
+    onFinishWorkout(completedSession);
+  };
+
+  const handleCancel = async () => {
+    await localDb.clearActiveWorkout();
+    onCancelWorkout();
+  };
+
+  const currentExercise = session.exercises[activeExIdx];
   const currentSet = currentExercise?.sets[activeSetIdx];
 
-  const totalSets = exercises.reduce((acc, ex) => acc + ex.sets.length, 0);
-  const completedSets = exercises.reduce((acc, ex) => acc + ex.sets.filter((s) => s.completed).length, 0);
+  const totalSets = session.exercises.reduce((acc, ex) => acc + ex.sets.length, 0);
+  const completedSets = session.exercises.reduce((acc, ex) => acc + ex.sets.filter((s) => s.completed).length, 0);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       {/* Session Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <span style={{ fontSize: '0.75rem', color: 'var(--forge-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
-            Live Workout
-          </span>
-          <h1 style={{ fontSize: '1.4rem' }}>{splitName}</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--forge-text-secondary)', textTransform: 'uppercase', fontWeight: 600 }}>
+              Week {session.weekNumber} • Day {session.dayNumber}
+            </span>
+            <span
+              style={{
+                fontSize: '0.7rem',
+                color: 'var(--forge-accent-primary)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '3px',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              <Database size={11} /> {saveStatus === 'saved' ? 'IndexedDB Saved' : 'Writing...'}
+            </span>
+          </div>
+          <h1 style={{ fontSize: '1.4rem' }}>{session.splitName}</h1>
         </div>
 
         <Button
@@ -136,14 +216,14 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
         }}
       >
         <span style={{ fontSize: '0.85rem', color: 'var(--forge-text-secondary)' }}>
-          Session Sets Completed
+          Completed Sets
         </span>
         <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 800, color: 'var(--forge-accent-primary)' }}>
           {completedSets} / {totalSets}
         </span>
       </div>
 
-      {/* Embedded Rest Timer when requested */}
+      {/* Embedded Rest Timer */}
       {showRestTimer && (
         <RestTimer initialSeconds={90} onTimerComplete={() => setShowRestTimer(false)} />
       )}
@@ -153,10 +233,10 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
         <Card variant="elevated" active style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {currentExercise.supersetPair && (
-                <Badge supersetPair={currentExercise.supersetPair} />
+              {currentExercise.supersetPairLabel && (
+                <Badge supersetPair={currentExercise.supersetPairLabel} />
               )}
-              <h2 style={{ fontSize: '1.15rem', margin: 0 }}>{currentExercise.name}</h2>
+              <h2 style={{ fontSize: '1.15rem', margin: 0 }}>{currentExercise.exerciseName}</h2>
             </div>
             <Badge variant="accent">Set {currentSet.setNumber} of {currentExercise.sets.length}</Badge>
           </div>
@@ -189,14 +269,14 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
         </Card>
       )}
 
-      {/* Set Checklist by Exercise */}
+      {/* Exercise and Sets Checklist */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {exercises.map((ex, eIdx) => (
-          <Card key={ex.id} variant="base" padding="sm" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {session.exercises.map((ex, eIdx) => (
+          <Card key={ex.exerciseId} variant="base" padding="sm" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {ex.supersetPair && <Badge supersetPair={ex.supersetPair} />}
-                <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{ex.name}</span>
+                {ex.supersetPairLabel && <Badge supersetPair={ex.supersetPairLabel} />}
+                <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>{ex.exerciseName}</span>
               </div>
               <span style={{ fontSize: '0.75rem', color: 'var(--forge-text-secondary)', fontFamily: 'var(--font-mono)' }}>
                 {ex.sets.filter((s) => s.completed).length}/{ex.sets.length}
@@ -208,7 +288,7 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
                 const isSelected = activeExIdx === eIdx && activeSetIdx === sIdx;
                 return (
                   <button
-                    key={set.setNumber}
+                    key={set.id}
                     onClick={() => {
                       setActiveExIdx(eIdx);
                       setActiveSetIdx(sIdx);
@@ -258,13 +338,13 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
           onClick={() => setShowCancelConfirm(true)}
           style={{ flex: 1 }}
         >
-          Cancel
+          Discard
         </Button>
         <Button
           variant="primary"
           size="md"
           icon={<CheckCircle2 size={16} />}
-          onClick={onFinishWorkout}
+          onClick={handleFinish}
           style={{ flex: 2 }}
         >
           Finish Workout
@@ -289,17 +369,17 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: 'var(--forge-danger)' }}>
               <AlertCircle size={22} />
               <h2 style={{ fontSize: '1.15rem', margin: 0, color: 'var(--forge-text-primary)' }}>
-                Cancel Workout?
+                Discard Workout?
               </h2>
             </div>
             <p style={{ color: 'var(--forge-text-secondary)', fontSize: '0.9rem' }}>
-              Are you sure you want to discard this workout? Unfinished sets will not be recorded to your history.
+              Are you sure you want to discard this workout? In-progress sets will be purged from IndexedDB.
             </p>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <Button variant="secondary" onClick={() => setShowCancelConfirm(false)}>
                 Keep Training
               </Button>
-              <Button variant="danger" onClick={onCancelWorkout}>
+              <Button variant="danger" onClick={handleCancel}>
                 Discard Session
               </Button>
             </div>

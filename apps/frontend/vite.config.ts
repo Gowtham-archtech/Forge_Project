@@ -8,7 +8,9 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // Use 'prompt' instead of 'autoUpdate' so service worker updates do not automatically
+      // reload the browser and disrupt an in-progress gym workout!
+      registerType: 'prompt',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
         name: 'FORGE — Built One Rep at a Time',
@@ -32,7 +34,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,woff}'],
+        // Do not force skipWaiting automatically during gym session
+        skipWaiting: false,
+        clientsClaim: false,
       },
     }),
   ],

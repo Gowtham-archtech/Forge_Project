@@ -3,34 +3,26 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { Play, Info } from 'lucide-react';
-import { SplitDayName } from '@forge/types';
+import { getPlannedSession, GeneratedDayPlan } from './planData';
 
 export interface TrainViewProps {
-  onStartSession: (dayName: SplitDayName) => void;
+  onStartSession: (plan: GeneratedDayPlan) => void;
 }
 
-interface SplitDayItem {
-  dayNumber: 1 | 2 | 3 | 4 | 5;
-  splitName: SplitDayName;
-  focus: string;
-  exercisesCount: number;
-  supersetCountWeek1: number;
-  supersetCountWeek2to4: number;
-}
-
-const FIVE_DAY_SPLIT: SplitDayItem[] = [
-  { dayNumber: 1, splitName: 'Chest + Triceps', focus: 'Anterior chain & elbow extension', exercisesCount: 6, supersetCountWeek1: 0, supersetCountWeek2to4: 2 },
-  { dayNumber: 2, splitName: 'Back + Biceps', focus: 'Vertical/horizontal pull & elbow flexion', exercisesCount: 6, supersetCountWeek1: 0, supersetCountWeek2to4: 2 },
-  { dayNumber: 3, splitName: 'Legs + Abs', focus: 'Quad/hamstring compound & core', exercisesCount: 6, supersetCountWeek1: 0, supersetCountWeek2to4: 2 },
-  { dayNumber: 4, splitName: 'Chest + Back', focus: 'Antagonist upper body hypertrophy', exercisesCount: 6, supersetCountWeek1: 0, supersetCountWeek2to4: 2 },
-  { dayNumber: 5, splitName: 'Shoulders + Arms + Abs', focus: 'Deltoid caps, arm volume & core', exercisesCount: 7, supersetCountWeek1: 0, supersetCountWeek2to4: 2 },
+const SPLIT_DAY_METAS = [
+  { dayNumber: 1 as const, splitName: 'Chest + Triceps' as const, focus: 'Anterior chain & elbow extension', exercisesCount: 6 },
+  { dayNumber: 2 as const, splitName: 'Back + Biceps' as const, focus: 'Vertical/horizontal pull & elbow flexion', exercisesCount: 6 },
+  { dayNumber: 3 as const, splitName: 'Legs + Abs' as const, focus: 'Quad/hamstring compound & core', exercisesCount: 6 },
+  { dayNumber: 4 as const, splitName: 'Chest + Back' as const, focus: 'Antagonist upper body hypertrophy', exercisesCount: 6 },
+  { dayNumber: 5 as const, splitName: 'Shoulders + Arms + Abs' as const, focus: 'Deltoid caps, arm volume & core', exercisesCount: 7 },
 ];
 
 export const TrainView: React.FC<TrainViewProps> = ({ onStartSession }) => {
   const [selectedWeek, setSelectedWeek] = useState<1 | 2 | 3 | 4>(2);
-  const [activeDay, setActiveDay] = useState<SplitDayItem>(FIVE_DAY_SPLIT[0]);
+  const [activeDayNumber, setActiveDayNumber] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   const supersetCountForCurrentWeek = selectedWeek === 1 ? 0 : 2;
+  const currentPlannedSession = getPlannedSession(selectedWeek, activeDayNumber);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -52,12 +44,12 @@ export const TrainView: React.FC<TrainViewProps> = ({ onStartSession }) => {
           gap: '4px',
         }}
       >
-        {[1, 2, 3, 4].map((wk) => {
+        {([1, 2, 3, 4] as const).map((wk) => {
           const isSelected = selectedWeek === wk;
           return (
             <button
               key={wk}
-              onClick={() => setSelectedWeek(wk as 1 | 2 | 3 | 4)}
+              onClick={() => setSelectedWeek(wk)}
               style={{
                 flex: 1,
                 minHeight: '38px',
@@ -101,14 +93,16 @@ export const TrainView: React.FC<TrainViewProps> = ({ onStartSession }) => {
 
       {/* Days List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {FIVE_DAY_SPLIT.map((item) => {
-          const isSelected = activeDay.dayNumber === item.dayNumber;
+        {SPLIT_DAY_METAS.map((item) => {
+          const isSelected = activeDayNumber === item.dayNumber;
+          const dayPlan = getPlannedSession(selectedWeek, item.dayNumber);
+
           return (
             <Card
               key={item.dayNumber}
               variant={isSelected ? 'elevated' : 'base'}
               active={isSelected}
-              onClick={() => setActiveDay(item)}
+              onClick={() => setActiveDayNumber(item.dayNumber)}
               style={{
                 cursor: 'pointer',
                 display: 'flex',
@@ -140,11 +134,26 @@ export const TrainView: React.FC<TrainViewProps> = ({ onStartSession }) => {
               </div>
 
               <p style={{ color: 'var(--forge-text-secondary)', fontSize: '0.82rem' }}>
-                {item.focus}
+                {item.focus} • {dayPlan.exercises.length} exercises
               </p>
 
               {isSelected && (
-                <div style={{ marginTop: '8px', paddingTop: '10px', borderTop: '1px solid var(--forge-border-subtle)' }}>
+                <div style={{ marginTop: '8px', paddingTop: '10px', borderTop: '1px solid var(--forge-border-subtle)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {/* Preview planned exercises */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', color: 'var(--forge-text-secondary)' }}>
+                    {dayPlan.exercises.slice(0, 3).map((ex) => (
+                      <div key={ex.exerciseId} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>• {ex.exerciseName}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)' }}>{ex.targetSets} × {ex.targetRepsMin}-{ex.targetRepsMax}</span>
+                      </div>
+                    ))}
+                    {dayPlan.exercises.length > 3 && (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--forge-text-muted)' }}>
+                        + {dayPlan.exercises.length - 3} more exercises
+                      </span>
+                    )}
+                  </div>
+
                   <Button
                     variant="primary"
                     fullWidth
@@ -152,10 +161,10 @@ export const TrainView: React.FC<TrainViewProps> = ({ onStartSession }) => {
                     icon={<Play size={16} />}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onStartSession(item.splitName);
+                      onStartSession(currentPlannedSession);
                     }}
                   >
-                    Start {item.splitName}
+                    Start Week {selectedWeek} Day {item.dayNumber} ({item.splitName})
                   </Button>
                 </div>
               )}

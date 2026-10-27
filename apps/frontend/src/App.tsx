@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavigationShell, NavigationTab } from './components/layout/NavigationShell';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { TrainView } from './features/train/TrainView';
@@ -6,40 +6,100 @@ import { ActiveWorkoutView } from './features/workout/ActiveWorkoutView';
 import { HistoryView } from './features/history/HistoryView';
 import { AnalyticsView } from './features/analytics/AnalyticsView';
 import { AccountView } from './features/account/AccountView';
-import { SyncState, SplitDayName } from '@forge/types';
+import { SyncState, WorkoutSession } from '@forge/types';
+import { localDb } from './storage/db';
+import { GeneratedDayPlan, getPlannedSession } from './features/train/planData';
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
-  const [activeWorkoutSplit, setActiveWorkoutSplit] = useState<SplitDayName | null>(null);
+  const [activePlan, setActivePlan] = useState<GeneratedDayPlan | null>(null);
+  const [restoredSession, setRestoredSession] = useState<WorkoutSession | null>(null);
+  const [isWorkoutActive, setIsWorkoutActive] = useState<boolean>(false);
   const [syncState, setSyncState] = useState<SyncState>('saved_locally');
-  const [pendingSyncCount, setPendingSyncCount] = useState<number>(1);
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+  const [isInitializing, setIsInitializing] = useState<boolean>(true);
 
-  const handleStartWorkout = (split: SplitDayName) => {
-    setActiveWorkoutSplit(split);
+  // Check for in-progress active workout on startup (IndexedDB restart resilience)
+  useEffect(() => {
+    const restoreSession = async () => {
+      try {
+        const savedActive = await localDb.getActiveWorkout();
+        if (savedActive && savedActive.status === 'in_progress') {
+          setRestoredSession(savedActive);
+          setIsWorkoutActive(true);
+        }
+        const queuedCount = await localDb.getPendingCount();
+        setPendingSyncCount(queuedCount);
+      } catch (err) {
+        console.error('Failed to restore active workout from IndexedDB:', err);
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+    restoreSession();
+  }, []);
+
+  const handleStartWorkout = (plan: GeneratedDayPlan) => {
+    setActivePlan(plan);
+    setRestoredSession(null);
+    setIsWorkoutActive(true);
   };
 
-  const handleFinishWorkout = () => {
-    setActiveWorkoutSplit(null);
-    setPendingSyncCount((prev) => prev + 1);
-    setSyncState('saved_locally');
+  const handleFinishWorkout = async (completedSession: WorkoutSession) => {
+    setIsWorkoutActive(false);
+    setActivePlan(null);
+    setRestoredSession(null);
+
+    // Enqueue sync mutation locally in IndexedDB
+    try {
+      await localDb.enqueueMutation({
+        mutationId: `mut-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        entityType: 'workout_session',
+        entityId: completedSession.id,
+        operation: 'upsert',
+        clientTimestamp: new Date().toISOString(),
+        expectedVersion: completedSession.version,
+        payload: completedSession,
+      });
+      const count = await localDb.getPendingCount();
+      setPendingSyncCount(count);
+      // Retain truthful offline status
+      setSyncState('saved_locally');
+    } catch (err) {
+      console.error('Error queuing completed workout for sync:', err);
+    }
+
     setCurrentTab('history');
   };
 
   const handleCancelWorkout = () => {
-    setActiveWorkoutSplit(null);
-  };
-
-  const handleTriggerSync = () => {
-    setSyncState('synchronizing');
-    setTimeout(() => {
-      setSyncState('synced');
-      setPendingSyncCount(0);
-    }, 1500);
+    setIsWorkoutActive(false);
+    setActivePlan(null);
+    setRestoredSession(null);
   };
 
   const handleLogout = () => {
-    alert('Logged out: Active session closed and local database locked.');
+    alert('Prototype Notice: In Phase P2, this will revoke the HttpOnly cookie session and lock the IndexedDB database.');
   };
+
+  if (isInitializing) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '100vh',
+          backgroundColor: 'var(--forge-bg-main)',
+          color: 'var(--forge-text-secondary)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.9rem',
+        }}
+      >
+        Initializing FORGE Offline Storage...
+      </div>
+    );
+  }
 
   return (
     <NavigationShell
@@ -47,12 +107,12 @@ export const App: React.FC = () => {
       onTabChange={setCurrentTab}
       syncState={syncState}
       pendingSyncCount={pendingSyncCount}
-      onSyncBadgeClick={handleTriggerSync}
-      isWorkoutActive={!!activeWorkoutSplit}
+      isWorkoutActive={isWorkoutActive}
     >
-      {activeWorkoutSplit ? (
+      {isWorkoutActive ? (
         <ActiveWorkoutView
-          splitName={activeWorkoutSplit}
+          initialPlan={activePlan || undefined}
+          restoredSession={restoredSession}
           onFinishWorkout={handleFinishWorkout}
           onCancelWorkout={handleCancelWorkout}
         />
@@ -60,9 +120,9 @@ export const App: React.FC = () => {
         <>
           {currentTab === 'dashboard' && (
             <DashboardView
-              onStartWorkout={handleStartWorkout}
+              onStartWorkout={() => handleStartWorkout(getPlannedSession(2, 1))}
               hasActiveWorkout={false}
-              onResumeWorkout={() => handleStartWorkout('Chest + Triceps')}
+              onResumeWorkout={() => handleStartWorkout(getPlannedSession(2, 1))}
             />
           )}
 
@@ -76,12 +136,11 @@ export const App: React.FC = () => {
 
           {currentTab === 'account' && (
             <AccountView
-              userEmail="gowtham@forge.local"
-              displayName="Gowtham"
+              userEmail="demo.athlete@forge.local"
+              displayName="Demo Athlete"
               syncState={syncState}
               pendingSyncCount={pendingSyncCount}
               onLogout={handleLogout}
-              onTriggerSync={handleTriggerSync}
             />
           )}
         </>
