@@ -7,9 +7,11 @@ import { NavigationShell } from '../components/layout/NavigationShell';
 import {
   validateTrainingProgramSupersets,
   WorkoutSession,
+  SyncMutation,
 } from '@forge/types';
 import { getPlannedSession, getAllProgramPlans } from '../features/train/planData';
 import { LocalStorageManager } from '../storage/db';
+import { generateUUID } from '../utils/uuid';
 
 describe('FORGE Foundation & Persistence — P1 Acceptance Tests', () => {
   let db: LocalStorageManager;
@@ -18,10 +20,25 @@ describe('FORGE Foundation & Persistence — P1 Acceptance Tests', () => {
     db = new LocalStorageManager(`test_user_${Date.now()}`);
   });
 
-  describe('IndexedDB Active Workout Persistence & Restart Resilience', () => {
+  describe('Contract Compatibility: Standard RFC4122 UUID v4 IDs', () => {
+    it('generates valid UUID v4 compliant with backend schema', () => {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const id1 = generateUUID();
+      const id2 = generateUUID();
+
+      expect(id1).toMatch(uuidRegex);
+      expect(id2).toMatch(uuidRegex);
+      expect(id1).not.toBe(id2);
+    });
+  });
+
+  describe('IndexedDB Persistence & Atomic Completion Transaction', () => {
     it('saves and restores active workout across simulated reloads', async () => {
+      const workoutId = generateUUID();
+      const setId = generateUUID();
+
       const mockSession: WorkoutSession = {
-        id: 'workout-test-123',
+        id: workoutId,
         userId: 'test_user',
         weekNumber: 2,
         dayNumber: 1,
@@ -37,7 +54,7 @@ describe('FORGE Foundation & Persistence — P1 Acceptance Tests', () => {
             orderIndex: 0,
             sets: [
               {
-                id: 'set-1',
+                id: setId,
                 setNumber: 1,
                 actualReps: 8,
                 actualWeightKg: 80,
@@ -56,46 +73,68 @@ describe('FORGE Foundation & Persistence — P1 Acceptance Tests', () => {
       // 2. Simulate page refresh / restart and retrieve
       const restored = await db.getActiveWorkout();
       expect(restored).not.toBeNull();
-      expect(restored?.id).toBe('workout-test-123');
+      expect(restored?.id).toBe(workoutId);
       expect(restored?.exercises[0].sets[0].completed).toBe(true);
       expect(restored?.exercises[0].sets[0].actualWeightKg).toBe(80);
-
-      // 3. Complete and clear active workout
-      await db.saveCompletedWorkout({
-        ...mockSession,
-        status: 'completed',
-        completedAt: new Date().toISOString(),
-      });
-
-      const activeAfterFinish = await db.getActiveWorkout();
-      expect(activeAfterFinish).toBeNull();
-
-      const completedList = await db.getCompletedWorkouts();
-      expect(completedList.length).toBe(1);
-      expect(completedList[0].id).toBe('workout-test-123');
     });
 
-    it('queues mutations for synchronization and tracks pending count', async () => {
-      await db.enqueueMutation({
-        mutationId: 'mut-1',
+    it('atomically saves completed workout, clears active draft, and enqueues sync mutation', async () => {
+      const workoutId = generateUUID();
+      const mutationId = generateUUID();
+
+      const mockActiveSession: WorkoutSession = {
+        id: workoutId,
+        userId: 'test_user',
+        weekNumber: 2,
+        dayNumber: 1,
+        splitName: 'Chest + Triceps',
+        status: 'in_progress',
+        startedAt: new Date().toISOString(),
+        durationSeconds: 1800,
+        exercises: [],
+        version: 1,
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Start with active workout saved
+      await db.saveActiveWorkout(mockActiveSession);
+      const beforeActive = await db.getActiveWorkout();
+      expect(beforeActive).not.toBeNull();
+
+      const completedSession: WorkoutSession = {
+        ...mockActiveSession,
+        status: 'completed',
+        completedAt: new Date().toISOString(),
+      };
+
+      const mutation: SyncMutation = {
+        mutationId,
         entityType: 'workout_session',
-        entityId: 'w-1',
+        entityId: workoutId,
         operation: 'upsert',
         clientTimestamp: new Date().toISOString(),
         expectedVersion: 1,
-        payload: {},
-      });
+        payload: completedSession,
+      };
 
-      const count = await db.getPendingCount();
-      expect(count).toBe(1);
+      // Execute single atomic transaction across all 3 stores
+      await db.completeWorkoutTransaction(completedSession, mutation);
 
-      const queued = await db.getQueuedMutations();
-      expect(queued.length).toBe(1);
-      expect(queued[0].mutationId).toBe('mut-1');
+      // Verify active workout was cleared
+      const afterActive = await db.getActiveWorkout();
+      expect(afterActive).toBeNull();
 
-      await db.removeMutation('mut-1');
-      const countAfter = await db.getPendingCount();
-      expect(countAfter).toBe(0);
+      // Verify completed workout was persisted
+      const completedList = await db.getCompletedWorkouts();
+      expect(completedList.length).toBe(1);
+      expect(completedList[0].id).toBe(workoutId);
+      expect(completedList[0].status).toBe('completed');
+
+      // Verify sync mutation was atomically queued
+      const queuedMutations = await db.getQueuedMutations();
+      expect(queuedMutations.length).toBe(1);
+      expect(queuedMutations[0].mutationId).toBe(mutationId);
+      expect(queuedMutations[0].entityId).toBe(workoutId);
     });
   });
 

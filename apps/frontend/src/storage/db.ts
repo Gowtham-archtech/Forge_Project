@@ -22,7 +22,7 @@ const DB_VERSION = 1;
 
 export class LocalStorageManager {
   private dbPromise: Promise<IDBPDatabase<ForgeDB>>;
-  private dbName: string;
+  public readonly dbName: string;
 
   constructor(userId: string = 'demo_user') {
     this.dbName = `forge_db_${userId}`;
@@ -60,19 +60,37 @@ export class LocalStorageManager {
     await db.delete('active_workout', 'current');
   }
 
-  // Completed workouts (immutable local history)
-  async saveCompletedWorkout(workout: WorkoutSession): Promise<void> {
+  /**
+   * ATOMIC TRANSACTION:
+   * Saves completed workout, deletes active workout draft, and enqueues sync mutation
+   * in a SINGLE atomic IndexedDB transaction. If any part fails or app terminates,
+   * all changes roll back together so history and the sync queue never diverge.
+   */
+  async completeWorkoutTransaction(
+    completedWorkout: WorkoutSession,
+    mutation: SyncMutation
+  ): Promise<void> {
     const db = await this.dbPromise;
-    await db.put('completed_workouts', workout);
-    await this.clearActiveWorkout();
+    const tx = db.transaction(
+      ['completed_workouts', 'active_workout', 'sync_queue'],
+      'readwrite'
+    );
+
+    await Promise.all([
+      tx.objectStore('completed_workouts').put(completedWorkout),
+      tx.objectStore('active_workout').delete('current'),
+      tx.objectStore('sync_queue').put(mutation),
+      tx.done,
+    ]);
   }
 
+  // Completed workouts (immutable local history)
   async getCompletedWorkouts(): Promise<WorkoutSession[]> {
     const db = await this.dbPromise;
     return db.getAllFromIndex('completed_workouts', 'by-startedAt');
   }
 
-  // Sync mutation queue
+  // Sync mutation queue operations
   async enqueueMutation(mutation: SyncMutation): Promise<void> {
     const db = await this.dbPromise;
     await db.put('sync_queue', mutation);
@@ -92,7 +110,12 @@ export class LocalStorageManager {
     const db = await this.dbPromise;
     return db.count('sync_queue');
   }
+
+  async close(): Promise<void> {
+    const db = await this.dbPromise;
+    db.close();
+  }
 }
 
-// Default instance for prototype / demo scope
+// Default instance for prototype scope
 export const localDb = new LocalStorageManager('demo_user');

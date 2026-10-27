@@ -6,9 +6,10 @@ import { ActiveWorkoutView } from './features/workout/ActiveWorkoutView';
 import { HistoryView } from './features/history/HistoryView';
 import { AnalyticsView } from './features/analytics/AnalyticsView';
 import { AccountView } from './features/account/AccountView';
-import { SyncState, WorkoutSession } from '@forge/types';
+import { SyncState, WorkoutSession, SyncMutation } from '@forge/types';
 import { localDb } from './storage/db';
 import { GeneratedDayPlan, getPlannedSession } from './features/train/planData';
+import { generateUUID } from './utils/uuid';
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavigationTab>('dashboard');
@@ -50,23 +51,24 @@ export const App: React.FC = () => {
     setActivePlan(null);
     setRestoredSession(null);
 
-    // Enqueue sync mutation locally in IndexedDB
+    // Atomically persist completed workout, clear active draft, and queue sync mutation
     try {
-      await localDb.enqueueMutation({
-        mutationId: `mut-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      const mutation: SyncMutation = {
+        mutationId: generateUUID(),
         entityType: 'workout_session',
         entityId: completedSession.id,
         operation: 'upsert',
         clientTimestamp: new Date().toISOString(),
         expectedVersion: completedSession.version,
         payload: completedSession,
-      });
+      };
+
+      await localDb.completeWorkoutTransaction(completedSession, mutation);
       const count = await localDb.getPendingCount();
       setPendingSyncCount(count);
-      // Retain truthful offline status
       setSyncState('saved_locally');
     } catch (err) {
-      console.error('Error queuing completed workout for sync:', err);
+      console.error('Atomic completion and queueing failed in IndexedDB:', err);
     }
 
     setCurrentTab('history');

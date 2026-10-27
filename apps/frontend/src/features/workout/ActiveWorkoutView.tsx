@@ -8,6 +8,7 @@ import { Check, CheckCircle2, XCircle, Timer, AlertCircle, Database } from 'luci
 import { WorkoutSession, RecordedExercise } from '@forge/types';
 import { GeneratedDayPlan } from '../train/planData';
 import { localDb } from '../../storage/db';
+import { generateUUID } from '../../utils/uuid';
 
 export interface ActiveWorkoutViewProps {
   initialPlan?: GeneratedDayPlan;
@@ -22,7 +23,7 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
   onFinishWorkout,
   onCancelWorkout,
 }) => {
-  // Initialize workout session structure
+  // Initialize workout session structure with compliant UUID v4 IDs
   const [session, setSession] = useState<WorkoutSession>(() => {
     if (restoredSession) return restoredSession;
 
@@ -44,7 +45,7 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
         orderIndex: idx,
         supersetPairLabel: supersetLabel,
         sets: Array.from({ length: pe.targetSets }, (_, sIdx) => ({
-          id: `set-${pe.exerciseId}-${sIdx + 1}-${Date.now()}`,
+          id: generateUUID(),
           setNumber: sIdx + 1,
           targetReps: pe.targetRepsMin,
           actualReps: pe.targetRepsMin,
@@ -56,7 +57,7 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
     });
 
     return {
-      id: `workout-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+      id: generateUUID(),
       userId: 'demo_user',
       weekNumber: plan.weekNumber,
       dayNumber: plan.dayNumber,
@@ -143,7 +144,7 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
     });
   };
 
-  const handleFinish = async () => {
+  const handleFinish = () => {
     const completedSession: WorkoutSession = {
       ...session,
       status: 'completed',
@@ -152,8 +153,6 @@ export const ActiveWorkoutView: React.FC<ActiveWorkoutViewProps> = ({
       updatedAt: new Date().toISOString(),
     };
 
-    // Save to completed workouts and remove from active workout store in IndexedDB
-    await localDb.saveCompletedWorkout(completedSession);
     onFinishWorkout(completedSession);
   };
 
